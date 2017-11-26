@@ -64,8 +64,12 @@ pub struct Block<'a> {
 }
 
 impl<'a> Block<'a> {
-    fn draw(&self, window:&mut Window) {
-        self.text.draw(window, self.x, self.y, Color::rgb(0, 0, 0));
+    fn draw(&self, window: &mut Window, offset: Point) {
+        let x = self.x - offset.x;
+        let y = self.y - offset.y;
+        if x + self.width > 0 && x < window.width() as i32 && y + self.height > 0 && y < window.height() as i32 {
+            self.text.draw(window, x, y, Color::rgb(0, 0, 0));
+        }
     }
 }
 
@@ -73,6 +77,8 @@ pub struct Guide<'a> {
     window: Window,
     window_width: u32,
     window_height: u32,
+    offset: Point,
+    max_offset: Point,
     rx: Receiver<GuideCommand>,
     nodes: Vec<Node>,
     blocks: Vec<Block<'a>>,
@@ -93,6 +99,8 @@ impl<'a> Guide<'a> {
             window: window,
             window_width: window_width,
             window_height: window_height,
+            offset: Point::new(0, 0),
+            max_offset: Point::new(0, 0),
             rx: rx,
             nodes: Vec::new(),
             blocks: Vec::new(),
@@ -169,6 +177,17 @@ impl<'a> Guide<'a> {
             pos.x += right_margin * 8;
         }
 
+        let mut max_offset = Point::new(0, 0);
+        for block in self.blocks.iter() {
+            if block.x + block.width > max_offset.x {
+                max_offset.x = block.x + block.width;
+            }
+            if block.y + block.height > max_offset.y {
+                max_offset.y = block.y + block.height;
+            }
+        }
+        self.max_offset = max_offset;
+
     }
 
     pub fn parse(&mut self) {
@@ -190,8 +209,7 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nemo nostrum istius gen
         use std::io::prelude::*;
         let mut contents = String::new();
         {
-            let file_name = &mut self.file;
-            let mut file = File::open(file_name).expect("file not found");
+            let mut file = File::open(&mut self.file).expect("file not found");
             file.read_to_string(&mut contents).expect("something went wrong reading the file");
         }
 
@@ -302,7 +320,7 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nemo nostrum istius gen
                     self.window.set(Color::rgb(255, 255, 255));
 
                     for block in self.blocks.iter() {
-                        block.draw(&mut self.window);
+                        block.draw(&mut self.window, self.offset);
                     }
 
                     self.window.sync();
@@ -315,7 +333,13 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nemo nostrum istius gen
                         redraw = true;
                     },
                     EventOption::Quit(_) => return,
-                    _ => ()
+                    EventOption::Scroll(scroll_event) => {
+                        self.offset.x = cmp::max(0, cmp::min(cmp::max(0, self.max_offset.x - self.window_width as i32), self.offset.x - scroll_event.x * 48));
+                        self.offset.y = cmp::max(0, cmp::min(cmp::max(0, self.max_offset.y - self.window_height as i32), self.offset.y - scroll_event.y * 48));
+
+                        redraw = true;
+                    },
+                    _ => (),
                 }
             }
         }
