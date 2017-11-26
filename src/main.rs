@@ -5,6 +5,7 @@ extern crate orbclient;
 
 use orbtk::point::Point;
 use std::ops::Add;
+use std::{cmp, env, str};
 use std::sync::mpsc::{channel, Receiver};
 use orbfont::Font;
 use orbclient::{Color, Renderer, Window, WindowFlag, EventOption};
@@ -15,7 +16,9 @@ pub struct Properties {
     pub font_size: Option<u32>,
     pub strong: Option<bool>,
     pub italic: Option<bool>,
-    pub new_line: bool
+    pub new_line: bool,
+    pub margin_top: Option<i32>,
+    pub margin_bottom: Option<i32>,
 }
 
 enum GuideCommand {
@@ -28,6 +31,8 @@ impl Properties {
             strong: None,
             italic: None,
             new_line: false,
+            margin_top: None,
+            margin_bottom: None,
         }
     }
 }
@@ -73,11 +78,13 @@ pub struct Guide<'a> {
     blocks: Vec<Block<'a>>,
     font_normal: &'a Font,
     font_bold: &'a Font,
+    file: String,
 }
 
 impl<'a> Guide<'a> {
-    pub fn new(font_normal: &'a Font, font_bold: &'a Font) -> Self {
+    pub fn new(file: &str, font_normal: &'a Font, font_bold: &'a Font) -> Self {
         let (tx, rx) = channel();
+
         let window_width = 500;
         let window_height = 500;
         let window = Window::new_flags(-1, -1, window_width, window_height, "Guide", &[WindowFlag::Resizable]).unwrap();
@@ -91,6 +98,7 @@ impl<'a> Guide<'a> {
             blocks: Vec::new(),
             font_normal: font_normal,
             font_bold: font_bold,
+            file: String::from(file),
         }
     }
 
@@ -99,6 +107,7 @@ impl<'a> Guide<'a> {
         
    
         let mut pos = Point::new(0,0);
+        let mut previous_height = 0;
 
         for (idx, mut node) in self.nodes.iter().enumerate() {
 
@@ -121,18 +130,27 @@ impl<'a> Guide<'a> {
                     _ => self.font_normal.render(word, font_height)
                 };
 
-                if new_line && idx != 0 {
-                    new_line = false;
-                    pos.x = 0;
-                    pos.y += font_height as i32 *2;
-                }
-                
                 let w = text.width() as i32;
                 let h = text.height() as i32;
 
+                if new_line {
+                    new_line = false;
+                    pos.x = 0;
+
+                    if idx != 0 {
+                        pos.y += previous_height as i32;
+                    }
+                }
+
                 if pos.x + w >= self.window_width as i32 && pos.x > 0 {
                     pos.x = 0;
-                    pos.y += font_height as i32;
+                    pos.y += h as i32;
+                }
+
+                if word_i == 0 {
+                    if let Some(margin) = node.properties.margin_top {
+                        pos.y += margin;
+                    }
                 }
 
                 self.blocks.push(Block {
@@ -144,6 +162,7 @@ impl<'a> Guide<'a> {
                     text: text
                 });
 
+                previous_height = h;
                 pos.x += w;
             }
 
@@ -153,13 +172,28 @@ impl<'a> Guide<'a> {
     }
 
     pub fn parse(&mut self) {
-        let small = r##"Lorem ipsum __strong__ text that is too long and breaks __line__
+        let small = r##"# This is header 1
+
+Lorem ipsum __strong__ text that is too long and breaks __line__
         
 Need to find out what to do from now on
 
+# This is __bold__ headerx 1
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nemo nostrum istius generis asotos iucunde putat vivere.
+
+## This is header 2
 
 Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nemo nostrum istius generis asotos iucunde putat vivere.
 "##;
+        use std::fs::File;
+        use std::io::prelude::*;
+        let mut contents = String::new();
+        {
+            let file_name = &mut self.file;
+            let mut file = File::open(file_name).expect("file not found");
+            file.read_to_string(&mut contents).expect("something went wrong reading the file");
+        }
 
         use pulldown_cmark::{Parser, Event, Options, Tag};
 
@@ -167,7 +201,9 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nemo nostrum istius gen
 
         let mut property_list: Vec<Properties> = Vec::new();
 
-        let parser = Parser::new_ext(&small, opts);
+        let parser = Parser::new_ext(&contents, opts);
+
+
         for event in parser {
             match event {
                 Event::Start(Tag::Paragraph) => {
@@ -182,16 +218,38 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nemo nostrum istius gen
                     property.new_line = true;
                     property_list.push(property);
                 }
-                Event::Start(Tag::Strong) => {
+                Event::Start(Tag::Header(size)) => {
+                    println!("Pushing header");
+                    let mut property = Properties::new();                    
+                    property.new_line = true;
+                    property.font_size = match size {
+                        1 => Some(40),
+                        2 => Some(30),
+                        _ => Some(20),
+                    };
+                    property.margin_top = match size {
+                        1 => Some(40),
+                        2 => Some(40),
+                        _ => Some(40),
+                    };
+                    property.margin_bottom = property.margin_top;
+                    
+                    property_list.push(property);
+                }
+                Event::Start(Tag::Strong) | Event::Start(Tag::Emphasis) => {
                     println!("Pushing Strong");
                     let mut property = match property_list.pop() {
                         Some(mut tmp) => {
+                            let new = tmp.clone();
+                            tmp.new_line = false;
+                            tmp.margin_top = None;
                             property_list.push(tmp);
-                            tmp.clone()
+                            new
                         }
                         None => Properties::new()
                     };
                     property.strong = Some(true);
+                    property.new_line = false;
                     
                     property_list.push(property);
                 }
@@ -201,17 +259,17 @@ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nemo nostrum istius gen
                         Some(mut tmp) => {
                             let new = tmp.clone();
                             tmp.new_line = false;
+                            tmp.margin_top = None;
                             property_list.push(tmp);
                             new
-                            
                         }
                         None => Properties::new()
                     };
                     self.nodes.push(Node::new(String::from(text), properties));
 
                 }
-                Event::Start(_) => {
-                    println!("Pushing unknown element");
+                Event::Start(x) => {
+                    println!("Pushing unknown element {:?}", x);
 
                 }
                 Event::End(_) => {
@@ -269,7 +327,7 @@ fn main() {
     Ok(font_normal) => {
         match Font::find(None, None, Some("Bold")) {
             Ok(font_bold) => {
-                Guide::new(&font_normal, &font_bold).exec()
+                Guide::new(&env::args().nth(1).unwrap_or("examples/loremipsum.md".to_string()), &font_normal, &font_bold).exec()
             },
             Err(_) => {println!("ERROR GETTING FONT")}
             }
