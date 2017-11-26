@@ -1,0 +1,10 @@
+[package]
+name = "guide"
+version = "0.1.0"
+authors = ["Bojan <bojan.kogoj@gmail.com>"]
+
+[dependencies]
+orbtk = "0.2"
+orbclient = "0.3.12"
+orbfont = "0.1.8"
+pulldown-cmark = "0.1.0"
